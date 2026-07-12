@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -209,7 +210,7 @@ func (r *Runner) findContainer(ctx context.Context, botID uuid.UUID) (string, er
 
 	info, err := r.cli.ContainerInspect(ctx, r.containerName(botID.String()))
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if errdefs.IsNotFound(err) {
 			return "", nil
 		}
 		return "", err
@@ -227,7 +228,7 @@ func (r *Runner) ensureImage(ctx context.Context) error {
 		if r.cfg.DockerPullPolicy != "always" {
 			return nil
 		}
-	} else if !client.IsErrNotFound(err) {
+	} else if !errdefs.IsNotFound(err) {
 		return err
 	}
 
