@@ -1,0 +1,32 @@
+services:
+  runner:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    environment:
+      SERVER_ADDR: ${SERVER_ADDR:-:8080}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-change-me-to-a-long-random-service-key}
+      BOT_IMAGE: ${BOT_IMAGE:-wt-bot-bot:latest}
+      BOT_SERVICE_URL: ${BOT_SERVICE_URL:-http://bots:8080}
+      BOT_SERVICE_TIMEOUT: ${BOT_SERVICE_TIMEOUT:-10s}
+      TEAMSPEAK_SERVICE_URL: ${TEAMSPEAK_SERVICE_URL:-http://teamspeaks:8080}
+      TEAMSPEAK_SERVICE_TIMEOUT: ${TEAMSPEAK_SERVICE_TIMEOUT:-10s}
+      QUERY_TIMEOUT: ${QUERY_TIMEOUT:-10s}
+      QUERY_KEEPALIVE: ${QUERY_KEEPALIVE:-200s}
+      RECONNECT_INTERVAL: ${RECONNECT_INTERVAL:-10s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-15s}
+      DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-wt-bot}
+      DOCKER_PULL_POLICY: ${DOCKER_PULL_POLICY:-missing}
+      DOCKER_AUTO_REMOVE: ${DOCKER_AUTO_REMOVE:-true}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8083:8080"
+    networks:
+      - wt-bot
+    restart: unless-stopped
+
+networks:
+  wt-bot:
+    external: true

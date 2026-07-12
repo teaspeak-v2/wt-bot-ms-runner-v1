@@ -1,0 +1,10 @@
+# Binaries
+/out
+/tmp
+
+# Environment
+.env
+
+# IDE
+.vscode
+.idea
