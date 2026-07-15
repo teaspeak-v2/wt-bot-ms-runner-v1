@@ -17,20 +17,20 @@ import (
 
 // Config is the runtime configuration for the runner.
 type Config struct {
-	BotImage             string
-	BotServiceURL        string
-	BotServiceTimeout    time.Duration
-	TeamSpeakServiceURL  string
+	BotImage                string
+	BotServiceURL           string
+	BotServiceTimeout       time.Duration
+	TeamSpeakServiceURL     string
 	TeamSpeakServiceTimeout time.Duration
-	ServiceAPIKey        string
-	QueryTimeout         time.Duration
-	QueryKeepAlive       time.Duration
-	ReconnectInterval    time.Duration
-	ShutdownTimeout      time.Duration
-	DockerHost           string
-	DockerNetwork        string
-	DockerPullPolicy     string
-	DockerAutoRemove     bool
+	ServiceAPIKey           string
+	QueryTimeout            time.Duration
+	QueryKeepAlive          time.Duration
+	ReconnectInterval       time.Duration
+	ShutdownTimeout         time.Duration
+	DockerHost              string
+	DockerNetwork           string
+	DockerPullPolicy        string
+	DockerAutoRemove        bool
 }
 
 // Result is the status of a bot container.
@@ -239,4 +239,144 @@ func (r *Runner) ensureImage(ctx context.Context) error {
 	defer rc.Close()
 	_, _ = io.Copy(io.Discard, rc)
 	return nil
+}
+
+// ContainerInfo is a summary of a Docker container for the infra report.
+type ContainerInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	Status  string `json:"status"`
+	State   string `json:"state"`
+	Health  string `json:"health"`
+	Uptime  int64  `json:"uptime_seconds"`
+	Created int64  `json:"created"`
+}
+
+// ListContainers returns all containers (running and stopped) on the host.
+func (r *Runner) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
+	containers, err := r.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+
+	result := make([]ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = c.Names[0]
+			if len(name) > 0 && name[0] == '/' {
+				name = name[1:]
+			}
+		}
+		health := ""
+		if c.State == "running" && c.Status != "" {
+			// Status string like "Up 5 minutes (healthy)" or "Up 5 minutes"
+			if idx := indexOf(c.Status, "("); idx >= 0 {
+				end := indexOf(c.Status, ")")
+				if end > idx {
+					health = c.Status[idx+1 : end]
+				}
+			}
+		}
+		uptime := int64(0)
+		if c.State == "running" {
+			uptime = int64(time.Since(time.Unix(c.Created, 0)).Seconds())
+		}
+		result = append(result, ContainerInfo{
+			ID:      c.ID[:12],
+			Name:    name,
+			Image:   c.Image,
+			Status:  c.Status,
+			State:   c.State,
+			Health:  health,
+			Uptime:  uptime,
+			Created: c.Created,
+		})
+	}
+	return result, nil
+}
+
+// ContainerLogs returns the last N lines of logs from a container by name.
+func (r *Runner) ContainerLogs(ctx context.Context, containerName string, tail int) (string, error) {
+	if tail <= 0 || tail > 2000 {
+		tail = 200
+	}
+	opts := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprintf("%d", tail),
+		Timestamps: true,
+	}
+	reader, err := r.cli.ContainerLogs(ctx, containerName, opts)
+	if err != nil {
+		return "", fmt.Errorf("container logs: %w", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("read logs: %w", err)
+	}
+	return string(data), nil
+}
+
+// InfraReport is a summary of the Docker infrastructure.
+type InfraReport struct {
+	TotalContainers     int             `json:"total_containers"`
+	RunningContainers   int             `json:"running_containers"`
+	StoppedContainers   int             `json:"stopped_containers"`
+	HealthyContainers   int             `json:"healthy_containers"`
+	UnhealthyContainers int             `json:"unhealthy_containers"`
+	Images              int             `json:"images"`
+	DockerVersion       string          `json:"docker_version"`
+	Containers          []ContainerInfo `json:"containers"`
+}
+
+// InfraReport returns a summary of the Docker infrastructure.
+func (r *Runner) InfraReport(ctx context.Context) (*InfraReport, error) {
+	containers, err := r.ListContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	imgs, err := r.cli.ImageList(ctx, image.ListOptions{})
+	if err != nil {
+		// Non-fatal — just report 0
+		imgs = nil
+	}
+
+	info, err := r.cli.Info(ctx)
+	dockerVersion := ""
+	if err == nil {
+		dockerVersion = info.ServerVersion
+	}
+
+	report := &InfraReport{
+		TotalContainers: len(containers),
+		Containers:      containers,
+		Images:          len(imgs),
+		DockerVersion:   dockerVersion,
+	}
+	for _, c := range containers {
+		if c.State == "running" {
+			report.RunningContainers++
+			if c.Health == "healthy" {
+				report.HealthyContainers++
+			} else if c.Health == "unhealthy" {
+				report.UnhealthyContainers++
+			}
+		} else {
+			report.StoppedContainers++
+		}
+	}
+	return report, nil
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }

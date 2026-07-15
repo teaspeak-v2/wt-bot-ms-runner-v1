@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -28,6 +29,9 @@ func (h *RunnerHandler) Routes(r chi.Router) {
 	r.Post("/bots/{id}/spawn", h.Spawn)
 	r.Post("/bots/{id}/stop", h.Stop)
 	r.Get("/bots/{id}/status", h.Status)
+	r.Get("/containers", h.ListContainers)
+	r.Get("/containers/{name}/logs", h.ContainerLogs)
+	r.Get("/infra", h.InfraReport)
 }
 
 func (h *RunnerHandler) parseID(r *http.Request) (uuid.UUID, error) {
@@ -103,4 +107,62 @@ func writeError(w http.ResponseWriter, status int, message string, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ListContainers returns all containers on the host.
+func (h *RunnerHandler) ListContainers(w http.ResponseWriter, r *http.Request) {
+	containers, err := h.runner.ListContainers(r.Context())
+	if err != nil {
+		h.logger.Error("list containers failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"containers": containers})
+}
+
+// ContainerLogs returns logs from a container by name.
+func (h *RunnerHandler) ContainerLogs(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required", nil)
+		return
+	}
+	tail := 200
+	if t := r.URL.Query().Get("tail"); t != "" {
+		if v, err := parseIntDefault(t, 200); err == nil {
+			tail = v
+		}
+	}
+	logs, err := h.runner.ContainerLogs(r.Context(), name, tail)
+	if err != nil {
+		h.logger.Error("container logs failed", "error", err, "container", name)
+		writeError(w, http.StatusInternalServerError, "failed to get logs", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"container": name, "logs": logs})
+}
+
+// InfraReport returns a summary of the Docker infrastructure.
+func (h *RunnerHandler) InfraReport(w http.ResponseWriter, r *http.Request) {
+	report, err := h.runner.InfraReport(r.Context())
+	if err != nil {
+		h.logger.Error("infra report failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get infra report", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func parseIntDefault(s string, def int) (int, error) {
+	if s == "" {
+		return def, nil
+	}
+	v := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return def, fmt.Errorf("invalid integer")
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v, nil
 }
